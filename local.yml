@@ -1,0 +1,135 @@
+version: '3'
+
+volumes:
+  local_postgres_data: {}
+  local_postgres_data_backups: {}
+
+services:
+  django: &django
+    build:
+      context: .
+      dockerfile: ./compose/local/django/Dockerfile
+    image: sky_eye_local_django
+    container_name: django
+    restart: always
+    depends_on:
+      - postgres
+    volumes:
+      - .:/app:z
+    env_file:
+      - ./.envs/.local/.django
+      - ./.envs/.local/.postgres
+    ports:
+      - "8000:8000"
+    command: /start
+
+  postgres:
+    build:
+      context: .
+      dockerfile: ./compose/production/postgres/Dockerfile
+    image: sky_eye_production_postgres
+    container_name: postgres
+    restart: always
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data:Z
+      - local_postgres_data_backups:/backups:z
+    env_file:
+      - ./.envs/.local/.postgres
+
+  docs:
+    image: sky_eye_local_docs
+    container_name: docs
+    build:
+      context: .
+      dockerfile: ./compose/local/docs/Dockerfile
+    env_file:
+      - ./.envs/.local/.django
+    volumes:
+      - ./docs:/docs:z
+      - ./config:/app/config:z
+      - ./sky_eye:/app/sky_eye:z
+    ports:
+      - "7000:7000"
+    command: /start-docs
+
+  redis:
+    image: redis:5.0
+    container_name: redis
+
+  celeryworker:
+    <<: *django
+    image: sky_eye_local_celeryworker
+    container_name: celeryworker
+    depends_on:
+      - redis
+      - postgres
+      
+    ports: []
+    command: /start-celeryworker
+
+  celerybeat:
+    <<: *django
+    image: sky_eye_local_celerybeat
+    container_name: celerybeat
+    depends_on:
+      - redis
+      - postgres
+      
+    ports: []
+    command: /start-celerybeat
+
+  flower:
+    <<: *django
+    image: sky_eye_local_flower
+    container_name: flower
+    ports:
+      - "5555:5555"
+    command: /start-flower
+
+  # angular:
+  #   build: 
+  #     context: .
+  #     dockerfile: ./compose/local/angular/Dockerfile
+  #   ports:
+  #     - "8181:80"
+  #   container_name: angular
+
+  geoserver:
+    image: geonode/geoserver
+    container_name: geoserver
+    restart: always
+    volumes:
+      - ./compose/local/geoserver/data/:/geoserver_data/data:z
+    ports:
+      - "8080:8080"
+    depends_on:
+      - "django"
+      - "postgres"
+      - "docs"
+      - "redis"
+
+  angular:
+    image: sky_eye_local_angular
+    container_name: angular
+    build:
+      context: .
+      dockerfile: ./compose/local/angular/Dockerfile
+    volumes:
+      - ./angular/:/app:z
+    ports:
+      - "4200:4200"   
+    depends_on:
+      - "geoserver"
+      - "django"
+      - "postgres"
+      - "docs"
+      - "redis"
+    # command: sh -c "/wait && /sayhello"
+    # command: sh -c "ng version"
+    command: >
+      sh -c "npm install && ng serve --host 0.0.0.0 --port 4200"
+    environment:
+      - WAIT_HOSTS=geoserver:8080, django:8000
+      - WAIT_HOSTS_TIMEOUT=300
+      - WAIT_SLEEP_INTERBAL=30
+      - WAIT_HOST_CONNECT_TIMEOUT=30
